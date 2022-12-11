@@ -120,7 +120,7 @@ def parse_status(homework):
                f'"{homework_name}". {verdict}'
     else:
         message = \
-            f'Передан неизвестный статус домашней работы "{homework_status}"'
+            f'Неизвестный статус домашней работы "{homework_status}"'
         logger.error(message)
         raise exceptions.ParseStatusException(message)
 
