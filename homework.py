@@ -6,10 +6,7 @@ import sys
 import time
 import telegram
 
-from pprint import pprint
 from http import HTTPStatus
-from telegram import ReplyKeyboardMarkup, Bot
-from telegram.ext import CommandHandler, Updater, MessageHandler, Filters
 
 from dotenv import load_dotenv
 
