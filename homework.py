@@ -1,9 +1,10 @@
-import os
 import logging
+import os
 import requests
 import sys
-import time
 import telegram
+import time
+
 
 from http import HTTPStatus
 
@@ -15,7 +16,7 @@ PRACTICUM_TOKEN = os.getenv('PRACTICUM_TOKEN')
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 
-RETRY_PERIOD = 600
+RETRY_PERIOD = 600  # 10 minutes
 ENDPOINT = 'https://practicum.yandex.ru/api/user_api/homework_statuses/'
 HEADERS = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
 
@@ -23,7 +24,7 @@ HEADERS = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
 HOMEWORK_VERDICTS = {
     'approved': 'Работа проверена: ревьюеру всё понравилось. Ура!',
     'reviewing': 'Работа взята на проверку ревьюером.',
-    'rejected': 'Работа проверена: у ревьюера есть замечания.'
+    'rejected': 'Работа проверена: у ревьюера есть замечания.',
 }
 
 logger = logging.getLogger(__name__)
@@ -31,43 +32,65 @@ logger.setLevel(logging.DEBUG)
 handler = logging.StreamHandler(stream=sys.stdout)
 logger.addHandler(handler)
 formatter = logging.Formatter(
-    '%(asctime)s %(levelname)s %(message)s'
+    '%(asctime)s %(levelname)s %(message)s',
 )
 handler.setFormatter(formatter)
 
 
 def check_tokens():
-    """Проверка переменных окружения.
+    """Check value of inviroment variables in globals().
 
-    Аня меня учила писать код без докстрингов!
-    Но раз pytest ругается - придется их использовать.
+    Returns:
+        list of missing inviroment variables.
+
     """
-    environment_variables = [
-        PRACTICUM_TOKEN,
-        TELEGRAM_TOKEN,
-        TELEGRAM_CHAT_ID,
-    ]
-    if all(environment_variables):
-        return True
+    environment_variables = (
+        'PRACTICUM_TOKEN',
+        'TELEGRAM_TOKEN',
+        'TELEGRAM_CHAT_ID',
+    )
+    return [i for i in environment_variables if globals()[i] is None]
 
 
 def send_message(bot, message):
-    """Отправляет сообщение в чат."""
+    """Send telegram message.
+
+    Args:
+        bot: telegram bot.
+        message: str message.
+
+    Raises:
+        TelegramError: when Telegram bot cant send message.
+
+
+    """
     try:
         bot.send_message(TELEGRAM_CHAT_ID, message)
-        logger.debug(f'Бот отправил сообщение: "{message}"')
-    except Exception:
-        logger.error('Не удалось отправить сообщение.')
+    except telegram.error.TelegramError as error:
+        logger.error(f'Боту не удалось отправить сообщение: "{error}"')
+        raise telegram.error.TelegramError(error)
+    logger.debug(f'Бот отправил сообщение: "{message}"')
 
 
 def get_api_answer(timestamp):
-    """Запрос к эндпоинту."""
-    payload = {'from_date': timestamp}
+    """Get a response from yandex api at the present moment.
+
+    Args:
+        timestamp: number of seconds since the epoch.
+
+    Returns:
+        homework_statuses.json(): answer from api in json().
+
+    Raises:
+        AssertionError: when ENDPOINT not available.
+        TypeError: if impossible to convert the response from api.
+
+    """
     try:
         homework_statuses = requests.get(
             ENDPOINT,
             headers=HEADERS,
-            params=payload,
+            params={'from_date': timestamp},
         )
     except Exception as error:
         message = f'{ENDPOINT} недоступен: {error}'
@@ -86,7 +109,20 @@ def get_api_answer(timestamp):
 
 
 def check_response(response):
-    """Проверяет ответ."""
+    """Check response from yandex-api.
+
+    Args:
+        response: answer from api.
+
+    Returns:
+        homework_list: list of homeworks
+
+    Raises:
+        TypeError: when type of response not dict.
+        KeyError: when response has no key 'homeworks'.
+        TypeError: when type of answer by key 'homewerks' - not a list.
+
+    """
     if not isinstance(response, dict):
         error = 'Тип данных ответа API отличен от типа dict (словарь).'
         raise TypeError(error)
@@ -96,41 +132,55 @@ def check_response(response):
         raise KeyError(message)
     homeworks_list = response['homeworks']
     if type(homeworks_list) != list:
-        message = \
-            f'В ответе от API домашки приходят не в виде списка. ' \
-            f'Получен: {type(homeworks_list)}'
+        message = (
+            f'В ответе от API домашки приходят не в виде списка. '
+            f'Получен: {type(homeworks_list)}',
+        )
         logger.error(message)
         raise TypeError(message)
     return homeworks_list
 
 
 def parse_status(homework):
-    """Извлекает инфу о домашке."""
-    if 'homework_name' not in homework:
-        message = 'Ключ homework_name недоступен'
-        logger.error(message)
-        raise KeyError(message)
-    if 'status' not in homework:
-        message = 'Ключ status недоступен'
-        logger.error(message)
-        raise KeyError(message)
-    homework_name = homework['homework_name']
-    homework_status = homework['status']
-    if homework_status in HOMEWORK_VERDICTS:
-        verdict = HOMEWORK_VERDICTS[homework_status]
-        return f'Изменился статус проверки работы ' \
-               f'"{homework_name}". {verdict}'
-    else:
-        message = \
-            f'Неизвестный статус домашней работы "{homework_status}"'
-        logger.error(message)
-        raise KeyError(message)
+    """Extract information about homework.
+
+    Args:
+        homework: last element of homework's list.
+
+    Returns:
+        message about homvork status.
+
+    Raises:
+        KeyError: when keys 'homework_name' or 'status' from
+            the homework list are unavailable.
+    """
+    try:
+        name, status = homework['homework_name'], homework['status']
+    except KeyError as error:
+        logger.error('Ключ в словаре homework недоступен')
+        raise KeyError(error)
+    try:
+        verdict = HOMEWORK_VERDICTS[status]
+        return (
+            'Изменился статус проверки работы '
+            f'"{name}". {verdict}'
+        )
+    except KeyError as error:
+        logger.error(f'Неизвестный статус домашней работы {error}')
+        raise KeyError(error)
 
 
 def main():
-    """Главная функция."""
-    if not check_tokens():
-        logger.critical('Ошибка в переменных окружения.')
+    """Launch main function.
+
+    Raises:
+        ValueError: when at least one of the enviroment
+            variables - not available.
+
+    """
+    missing_list = check_tokens()
+    if missing_list:
+        logger.critical(f'Ошибка в переменных окружения: {missing_list}')
         raise ValueError('Ошибка в переменных окружения.')
 
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
@@ -138,14 +188,14 @@ def main():
     timestamp = int(time.time())
     current_status = ''
     current_error = ''
+    response = get_api_answer(timestamp)
 
     while True:
         try:
-            response = get_api_answer(timestamp)
             homework = check_response(response)
-            if len(homework) == 0:
-                logger.debug('Статус не обновлен')
+            if not len(homework):
                 send_message(bot, 'Статус не обновлён.')
+                logger.debug('Статус не обновлен')
             else:
                 homework_status = parse_status(homework[0])
                 if current_status == homework_status:
