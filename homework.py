@@ -5,7 +5,6 @@ import sys
 import telegram
 import time
 
-
 from http import HTTPStatus
 
 from dotenv import load_dotenv
@@ -40,16 +39,22 @@ handler.setFormatter(formatter)
 def check_tokens():
     """Check value of inviroment variables in globals().
 
-    Returns:
-        list of missing inviroment variables.
-
+    Raises:
+        ValueError: when at least one of the environment variable not able.
     """
     environment_variables = (
         'PRACTICUM_TOKEN',
         'TELEGRAM_TOKEN',
         'TELEGRAM_CHAT_ID',
     )
-    return [i for i in environment_variables if globals()[i] is None]
+    missing_list = [
+        value
+        for value in environment_variables
+        if globals().get(value) is None
+    ]
+    if missing_list:
+        logger.critical('Ошибка в переменных окружения: %s', missing_list)
+        raise ValueError('Ошибка в переменных окружения.')
 
 
 def send_message(bot, message):
@@ -61,15 +66,13 @@ def send_message(bot, message):
 
     Raises:
         TelegramError: when Telegram bot cant send message.
-
-
     """
     try:
         bot.send_message(TELEGRAM_CHAT_ID, message)
     except telegram.error.TelegramError as error:
-        logger.error(f'Боту не удалось отправить сообщение: "{error}"')
+        logger.exception('Боту не удалось отправить сообщение: %s', error)
         raise telegram.error.TelegramError(error)
-    logger.debug(f'Бот отправил сообщение: "{message}"')
+    logger.debug('Бот отправил сообщение: %s', message)
 
 
 def get_api_answer(timestamp):
@@ -84,7 +87,6 @@ def get_api_answer(timestamp):
     Raises:
         AssertionError: when ENDPOINT not available.
         TypeError: if impossible to convert the response from api.
-
     """
     try:
         homework_statuses = requests.get(
@@ -94,17 +96,17 @@ def get_api_answer(timestamp):
         )
     except Exception as error:
         message = f'{ENDPOINT} недоступен: {error}'
-        logger.error(message)
+        logger.exception(message)
         raise AssertionError(message)
     if homework_statuses.status_code != HTTPStatus.OK:
         message = f'Код ответа API: {homework_statuses.status_code}'
-        logger.error(message)
+        logger.exception(message)
         raise AssertionError(message)
     try:
         return homework_statuses.json()
     except Exception as error:
         message = f'Ошибка преобразования к формату json: {error}'
-        logger.error(message)
+        logger.exception(message)
         raise TypeError(message)
 
 
@@ -121,7 +123,6 @@ def check_response(response):
         TypeError: when type of response not dict.
         KeyError: when response has no key 'homeworks'.
         TypeError: when type of answer by key 'homewerks' - not a list.
-
     """
     if not isinstance(response, dict):
         error = 'Тип данных ответа API отличен от типа dict (словарь).'
@@ -130,15 +131,15 @@ def check_response(response):
         message = 'Ключ homeworks недоступен'
         logger.error(message)
         raise KeyError(message)
-    homeworks_list = response['homeworks']
-    if type(homeworks_list) != list:
+    homeworks = response['homeworks']
+    if not isinstance(homeworks, list):
         message = (
             f'В ответе от API домашки приходят не в виде списка. '
-            f'Получен: {type(homeworks_list)}',
+            f'Получен: {type(homeworks)}',
         )
         logger.error(message)
         raise TypeError(message)
-    return homeworks_list
+    return homeworks
 
 
 def parse_status(homework):
@@ -157,31 +158,21 @@ def parse_status(homework):
     try:
         name, status = homework['homework_name'], homework['status']
     except KeyError as error:
-        logger.error('Ключ в словаре homework недоступен')
+        logger.exception('Ключ в словаре homework недоступен')
         raise KeyError(error)
     try:
-        verdict = HOMEWORK_VERDICTS[status]
         return (
             'Изменился статус проверки работы '
-            f'"{name}". {verdict}'
+            f'"{name}". {HOMEWORK_VERDICTS[status]}'
         )
     except KeyError as error:
-        logger.error(f'Неизвестный статус домашней работы {error}')
+        logger.exception('Неизвестный статус домашней работы %s', error)
         raise KeyError(error)
 
 
 def main():
-    """Launch main function.
-
-    Raises:
-        ValueError: when at least one of the enviroment
-            variables - not available.
-
-    """
-    missing_list = check_tokens()
-    if missing_list:
-        logger.critical(f'Ошибка в переменных окружения: {missing_list}')
-        raise ValueError('Ошибка в переменных окружения.')
+    """Launch main function."""
+    check_tokens()
 
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
 
@@ -191,21 +182,21 @@ def main():
     response = get_api_answer(timestamp)
 
     while True:
+        homework = check_response(response)
         try:
-            homework = check_response(response)
-            if not len(homework):
-                send_message(bot, 'Статус не обновлён.')
-                logger.debug('Статус не обновлен')
-            else:
+            if homework:
                 homework_status = parse_status(homework[0])
                 if current_status == homework_status:
                     logger.debug(homework_status)
                 else:
                     current_status = homework_status
                     send_message(bot, homework_status)
+            else:
+                send_message(bot, 'Статус не обновлён.')
+                logger.debug('Статус не обновлен')
         except Exception as error:
             message = f'Сбой в работе программы: {error}'
-            logger.error(message)
+            logger.exception(message)
             if current_error != str(error):
                 current_error = str(error)
                 send_message(bot, message)
