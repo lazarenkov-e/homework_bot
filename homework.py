@@ -117,7 +117,7 @@ def check_response(response):
         response: answer from api.
 
     Returns:
-        homework_list: list of homeworks
+        homeworks: list of homeworks
 
     Raises:
         TypeError: when type of response not dict.
